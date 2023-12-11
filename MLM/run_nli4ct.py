@@ -351,14 +351,10 @@ def main():
 
     def preprocess_function(examples):
         # Tokenize the texts
-        #premise = str(map(concat_input_seq, examples['primary_premise']))
-
-        #if examples['type'] == 'comparison':
-            #premise = str(premise) + str(map(concat_input_seq, examples['secondary_premise']))
         
         return tokenizer(
             examples["statement"],
-            examples['primary_premise'],  # examples["primary_premise"], even if type is comparison we use this field (see concat_input_seq fct)
+            examples['primary_premise'],  # even if type is comparison we use this field (see concat_input_seq fct)
             padding=padding,
             max_length=data_args.max_seq_length,
             truncation=True,
