@@ -15,6 +15,7 @@ CTR_FOLDER = "/home/aguiar/Documents/SE_2024_Task_2/SemEval-2024-Task-2/training
 TRAIN_FILE = "/home/aguiar/Documents/SE_2024_Task_2/SemEval-2024-Task-2/training_data/train.json"
 VALID_FILE = "/home/aguiar/Documents/SE_2024_Task_2/SemEval-2024-Task-2/training_data/dev.json"
 PRACTICE_TEST_FILE = "/home/aguiar/Documents/SE_2024_Task_2/SemEval-2024-Task-2/training_data/practice_test.json"
+SAMPLED_PRACTICE_TEST_FILE = "/home/aguiar/Documents/SE_2024_Task_2/SemEval-2024-Task-2/training_data/sample_practise_test_set.json"
 
 def fetch_evidences(primary_id, secondary_id, split):
     """
@@ -194,7 +195,7 @@ def add_premises_to_dataset():
 
     # Integration of the Practice test set 
 
-    with open(PRACTICE_TEST_FILE) as json_file:
+    with open(SAMPLED_PRACTICE_TEST_FILE) as json_file:  # NOTE changed for doing the sample 
         json_practice_test = json.load(json_file)
     #print("XXXX", json_practice_test)
 
@@ -252,7 +253,7 @@ def add_premises_to_dataset():
     # TODO le json_practice_test est un dict et pas un dataset 
     #print("DDDD", json_practice_test)
     ds_test = Dataset.from_dict(cleaned_ds)
-    print("CACAAAA", ds_test)
+    #print("CACAAAA", ds_test)
     #print('KKKK', ds_test)
     #print('kkk', len(all_secondary_premise_test))
     #ds_test = ds_test.add_column("primary_premise", all_primary_premise_test)
@@ -264,8 +265,8 @@ def add_premises_to_dataset():
         "validation": ds_valid,
         "test": ds_test
     })
-    print(ds)
-    ds.save_to_disk("/home/aguiar/Documents/SE_2024_Task_2/SemEval-2024-Task-2/training_data/dump")
+    #print(ds)
+    ds.save_to_disk("/home/aguiar/Documents/SE_2024_Task_2/SemEval-2024-Task-2/training_data/sampled_data")
     return ds
 
 
