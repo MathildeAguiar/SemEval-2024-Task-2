@@ -1,0 +1,50 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "type": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "section_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "primary_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "secondary_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "statement": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "label": {
+      "dtype": "null",
+      "_type": "Value"
+    },
+    "primary_premise": {
+      "feature": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "secondary_premise": {
+      "feature": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}
