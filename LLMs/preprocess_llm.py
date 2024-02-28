@@ -1,9 +1,14 @@
 import os
 from datasets import load_dataset, concatenate_datasets, load_from_disk
+from transformers import AutoTokenizer
+import numpy as np
 # from build_dataset import add_premises_to_dataset
 
 
-INSTRUCTION = "From the following statement and premise, would you say there is a contradiction between the statement and the premise ? If so, just answer by saying 'contradiction'.\n"
+INSTRUCTION = " Based on this premise, is the hypothesis true? "
+#"From the following statement and premise, would you say there is a contradiction or an entailment between the statement and the premise ? If so, just answer by saying 'contradiction' or 'entailment'.\n"
+INSTRUCTION_TO_INFER = "From the previously seen example, solve the following problem:\nFrom the following statement and premise, would you say there is a contradiction or an entailment between the statement and the premise ? If so, just answer by saying 'contradiction' or 'entailment'.\n"
+INSTRUCTION_EXAMPLE = "Here one or 2 two examples of our problem:\nFrom the following statement and premise, would you say there is a contradiction or an entailment between the statement and the premise ? If so, just answer by saying 'contradiction' or 'entailment'.\n"
 PREFIX_STATEMENT = "Statement: "
 PREFIX_PREMISE = "Premise: "
 PREFIX_ANSWER = "Answer: "
@@ -14,8 +19,8 @@ SUFFIX_EXPLANATION = " between the premise and the statement."
 PREFIX_WRONG_EXPLANATION = "Wrong explanation: Considering the following evidences in the premise: '"
 MIDDLE_WRONG_EXPLANATION = "', we can conclude that there is a "
 SUFFIX_WONRG_EXPLANATION = " between the premise and the statement."
-PATH_TO_LOCAL_DS = "/home/aguiar/Documents/SE_2024_Task_2/SemEval-2024-Task-2/training_data/sampled_data"
-# PATH_TO_LOCAL_DS = "/mnt/beegfs/home/aguiar/SE2024/sampled_data"
+OPTIONS = "OPTIONS: - 'Yes' - 'No'"
+PATH_TO_LOCAL_DS = "/XXX/real_set/"
 
 ### Utils ###
 
@@ -31,7 +36,7 @@ def concat_premise(example):
 
 def concat_evidence(example):
     concat_evidence = ""
-    if 'primary_evidences' in example.keys():  # TODO see why there is 1 instance that does not have evidences 
+    if 'primary_evidences' in example.keys():
         for i in example['primary_evidences']:
             concat_evidence = concat_evidence + str(i) + ' '
         if example['type'] == 'Comparison':
@@ -43,7 +48,6 @@ def concat_evidence(example):
         pass
 
 def pick_wrong_evidence(example):
-    # TODO améliorer 
     """
     concat_wrong_evidence = ""
     cnt1 = 0
@@ -85,8 +89,6 @@ def build_zs_instances():
     all_templates = []
     # Need the ids for formating the results 
     all_ids = []
-
-    # og_ds = add_premises_to_dataset()
     # Load from local files
     og_ds = load_from_disk(PATH_TO_LOCAL_DS)
     ds_test = og_ds['test']
@@ -94,15 +96,14 @@ def build_zs_instances():
     ds_test = ds_test.map(concat_premise)
 
     for inst in ds_test:
-        template = INSTRUCTION + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] + '\n' 
+        template = PREFIX_PREMISE + inst['primary_premise'] + PREFIX_STATEMENT + inst['statement'] + INSTRUCTION + OPTIONS
         all_templates.append(template)
         all_ids.append(inst['id'])  
-    print("LEN", len(all_templates))
-    print(all_templates[0])
+    with open("dump_prompts.txt", 'w+') as f:
+        f.write("\n\n".join(all_templates))
 
     return all_templates, all_ids
 
-# build_zs_instances()
 
 def build_1shot_instances():
     """
@@ -129,15 +130,22 @@ def build_1shot_instances():
     ds = concatenate_datasets([ds_train, ds_valid])
     # Shuffle the dataset (train+dev) to not have pattern or use always the same examples 
     ds = ds.shuffle()
+    # sort it by label
+    ds = ds.sort('label')
     # Instances for the 1-shot examples, 500 instances as the test length is 500 
-    ds_1S = ds.select(range(500))
+    ds_1S_contrad = ds.select(range(250))
+    ds_1S_ent = ds.select(range(len(ds)-250,len(ds)))
     cnt = 0
-    for inst in ds_test:
-            template = INSTRUCTION + PREFIX_STATEMENT + ds_1S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_1S[cnt-1]['primary_premise'] + '\n' + PREFIX_ANSWER + ds_1S[cnt-1]['label'] + '\n' + SEPARATOR_FS + '\n' + INSTRUCTION + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] 
+    for inst in ds_test:        
+            first_example = PREFIX_PREMISE + ds_1S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_1S_ent[cnt-1]['label'] 
+            second_example = PREFIX_PREMISE + ds_1S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_1S_contrad[cnt-1]['label'] 
+            inference = PREFIX_PREMISE + inst['primary_premise'] + PREFIX_STATEMENT + inst['statement'] + INSTRUCTION + OPTIONS 
+            template = first_example+'\n'+SEPARATOR_FS+'\n'+second_example+'\n'+SEPARATOR_FS+'\n'+inference # (first_example, second_example, inference)
             cnt+=1
             all_templates.append(template)
             all_ids.append(inst['id'])
-    print("LEN", len(all_templates))
+            if cnt > 249:
+                cnt = 0       
 
     return all_templates, all_ids
 
@@ -168,17 +176,26 @@ def build_2shot_instances():
     ds = concatenate_datasets([ds_train, ds_valid])
     # Shuffle the dataset (train+dev) to not have pattern or use always the same examples 
     ds = ds.shuffle()
+    # sort it by label
+    ds = ds.sort('label')
     # Instances for the 1-shot examples, 500 instances as the test length is 500 
-    ds_1S = ds.select(range(500))
-    ds_2S = ds.select(range(501, 1001))
+    ds_1S_contrad = ds.select(range(250))
+    ds_1S_ent = ds.select(range(len(ds)-250,len(ds)))
+    ds_2S_contrad = ds.select(range(251, 501))
+    ds_2S_ent = ds.select(range(len(ds)-501,len(ds)-251))
     cnt = 0
     for inst in ds_test:
-            template = INSTRUCTION + PREFIX_STATEMENT + ds_1S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_1S[cnt-1]['primary_premise'] + '\n' + PREFIX_ANSWER + ds_1S[cnt-1]['label'] + '\n' + SEPARATOR_FS + '\n' +INSTRUCTION + PREFIX_STATEMENT + ds_2S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_2S[cnt-1]['primary_premise'] + '\n' + PREFIX_ANSWER + ds_2S[cnt-1]['label'] + '\n' +SEPARATOR_FS + '\n' + INSTRUCTION + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] 
+            first_example = PREFIX_PREMISE + ds_1S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_1S_ent[cnt-1]['label'] 
+            second_example = PREFIX_PREMISE + ds_1S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_1S_contrad[cnt-1]['label'] 
+            third_example = PREFIX_PREMISE + ds_2S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_2S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_2S_ent[cnt-1]['label'] 
+            fourth_example = PREFIX_PREMISE + ds_2S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_2S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_2S_contrad[cnt-1]['label'] 
+            inf = PREFIX_PREMISE + inst['primary_premise'] + PREFIX_STATEMENT + inst['statement'] + INSTRUCTION + OPTIONS 
+            template = first_example+'\n'+SEPARATOR_FS+'\n'+second_example+'\n'+SEPARATOR_FS+'\n'+SEPARATOR_FS+'\n'+third_example+'\n'+SEPARATOR_FS+'\n'+fourth_example+SEPARATOR_FS+'\n'+inf  
             all_templates.append(template)
             all_ids.append(inst['id'])
             cnt+=1
-    print("LEN", len(all_templates))
-
+            if cnt > 249:
+                cnt = 0
     return all_templates, all_ids
 
 
@@ -204,20 +221,27 @@ def build_1shot_instances_COT():
     ds_train = ds_train.map(concat_evidence)
     ds_valid = ds_valid.map(concat_evidence)
     ds_test = ds_test.map(concat_evidence)
+    ds_test = ds_test.select(range(2210,5500))
 
     ds = concatenate_datasets([ds_train, ds_valid])
     # Shuffle the dataset (train+dev) to not have pattern or use always the same examples 
     ds = ds.shuffle()
+    ds = ds.sort('label')
     # Instances for the 1-shot examples, 500 instances as the test length is 500 
-    ds_1S = ds.select(range(500))
+    ds_1S_contrad = ds.select(range(250))
+    ds_1S_ent = ds.select(range(len(ds)-250,len(ds)))
     cnt = 0
     for inst in ds_test:
-            template = INSTRUCTION + PREFIX_STATEMENT + ds_1S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_1S[cnt-1]['primary_premise'] + '\n' + PREFIX_EXPLANATION + ds_1S[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_1S[cnt-1]['label'] + '\n' + SEPARATOR_FS + '\n' + INSTRUCTION + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] 
+            first_example = PREFIX_PREMISE + ds_1S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_EXPLANATION + ds_1S_ent[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S_ent[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_1S_ent[cnt-1]['label'] + '\n'
+            second_example = PREFIX_PREMISE + ds_1S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_EXPLANATION + ds_1S_contrad[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S_contrad[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_1S_contrad[cnt-1]['label'] + '\n'
+            inf = PREFIX_PREMISE + inst['primary_premise'] + PREFIX_STATEMENT + inst['statement'] + INSTRUCTION + OPTIONS
+            template = first_example+'\n'+SEPARATOR_FS+'\n'+second_example+'\n'+SEPARATOR_FS+'\n'+inf 
             cnt+=1
             all_templates.append(template)
             all_ids.append(inst['id'])
-    print("LEN", len(all_templates))
-
+            if cnt > 249:
+                cnt = 0
+         
     return all_templates, all_ids
 
 
@@ -241,21 +265,32 @@ def build_2shot_instances_COT():
     ds_train = ds_train.map(concat_evidence)
     ds_valid = ds_valid.map(concat_evidence)
     ds_test = ds_test.map(concat_evidence)
+    ds_test = ds_test.select(range(4074,5500))
 
     ds = concatenate_datasets([ds_train, ds_valid])
     # Shuffle the dataset (train+dev) to not have pattern or use always the same examples 
     ds = ds.shuffle()
+    # sort it by label
+    ds = ds.sort('label')
     # Instances for the 1-shot examples, 500 instances as the test length is 500 
-    ds_1S = ds.select(range(500))
-    ds_2S = ds.select(range(501, 1001))
+    ds_1S_contrad = ds.select(range(250))
+    ds_1S_ent = ds.select(range(len(ds)-250,len(ds)))
+    ds_2S_contrad = ds.select(range(251, 501))
+    ds_2S_ent = ds.select(range(len(ds)-501,len(ds)-251))      
     cnt = 0
     for inst in ds_test:
-            template = INSTRUCTION + PREFIX_STATEMENT + ds_1S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_1S[cnt-1]['primary_premise'] + '\n' + PREFIX_EXPLANATION + ds_1S[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_1S[cnt-1]['label'] + '\n' + SEPARATOR_FS + '\n' + INSTRUCTION + PREFIX_STATEMENT + ds_2S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_2S[cnt-1]['primary_premise'] + '\n' + PREFIX_EXPLANATION + ds_2S[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_2S[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_2S[cnt-1]['label'] + '\n' + SEPARATOR_FS + '\n' + INSTRUCTION + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] 
+            first_example = PREFIX_PREMISE + ds_1S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_EXPLANATION + ds_1S_ent[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S_ent[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_1S_ent[cnt-1]['label'] + '\n'
+            second_example = PREFIX_PREMISE + ds_1S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_EXPLANATION + ds_1S_contrad[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S_contrad[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_1S_contrad[cnt-1]['label'] + '\n'
+            third_example = PREFIX_PREMISE + ds_2S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_2S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_EXPLANATION + ds_2S_ent[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_2S_ent[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_2S_ent[cnt-1]['label'] + '\n'
+            fourth_example = PREFIX_PREMISE + ds_2S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_2S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_EXPLANATION + ds_2S_contrad[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_2S_contrad[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_2S_contrad[cnt-1]['label'] + '\n'            
+            inf = PREFIX_PREMISE + inst['primary_premise'] + PREFIX_STATEMENT + inst['statement'] + INSTRUCTION + OPTIONS
+            template = first_example+'\n'+SEPARATOR_FS+'\n'+second_example+'\n'+SEPARATOR_FS+'\n'+SEPARATOR_FS+'\n'+third_example+'\n'+SEPARATOR_FS+'\n'+fourth_example+SEPARATOR_FS+'\n'+inf 
             cnt+=1
             all_templates.append(template)
             all_ids.append(inst['id'])
-    print("LEN", len(all_templates))
-
+            if cnt > 249:
+                cnt = 0
+            
     return all_templates, all_ids
 
 
@@ -285,21 +320,26 @@ def build_1shot_instances_CCOT():
     ds_train = ds_train.map(concat_evidence)
     ds_valid = ds_valid.map(concat_evidence)
     ds_test = ds_test.map(concat_evidence)
-
+    ds_test = ds_test.select(range(653,5500))
 
     ds = concatenate_datasets([ds_train, ds_valid])
     # Shuffle the dataset (train+dev) to not have pattern or use always the same examples 
     ds = ds.shuffle()
+    ds = ds.sort('label')
     # Instances for the 1-shot examples, 500 instances as the test length is 500 
-    ds_1S = ds.select(range(500))
+    ds_1S_contrad = ds.select(range(250))
+    ds_1S_ent = ds.select(range(len(ds)-250,len(ds)))
     cnt = 0
     for inst in ds_test:
-            template = INSTRUCTION + PREFIX_STATEMENT + ds_1S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_1S[cnt-1]['primary_premise'] + '\n' + PREFIX_EXPLANATION + ds_1S[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_WRONG_EXPLANATION + ds_1S[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_1S[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + PREFIX_ANSWER + ds_1S[cnt-1]['label'] + '\n' + SEPARATOR_FS + '\n' + INSTRUCTION + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] 
+            first_example = PREFIX_PREMISE + ds_1S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_1S_ent[cnt-1]['label'] + PREFIX_EXPLANATION + ds_1S_ent[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S_ent[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_WRONG_EXPLANATION + ds_1S_ent[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_1S_ent[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + PREFIX_ANSWER + ds_1S_ent[cnt-1]['label'] + '\n' 
+            second_example = PREFIX_PREMISE + ds_1S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_1S_contrad[cnt-1]['label'] + PREFIX_EXPLANATION + ds_1S_contrad[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S_contrad[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_WRONG_EXPLANATION + ds_1S_contrad[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_1S_contrad[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + PREFIX_ANSWER + ds_1S_contrad[cnt-1]['label'] + '\n' 
+            inf = INSTRUCTION_TO_INFER + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] 
+            template = first_example+'\n'+SEPARATOR_FS+'\n'+second_example+'\n'+SEPARATOR_FS+'\n'+inf # (first_example, second_example, inf)
             cnt+=1
             all_templates.append(template)
             all_ids.append(inst['id'])
-    print("LEN", len(all_templates))
-
+            if cnt > 249:
+                cnt = 0
     return all_templates, all_ids
 
 
@@ -327,22 +367,31 @@ def build_2shot_instances_CCOT():
     ds_train = ds_train.map(concat_evidence)
     ds_valid = ds_valid.map(concat_evidence)
     ds_test = ds_test.map(concat_evidence)
-
+    ds_test = ds_test.select(range(3709,5500))
 
     ds = concatenate_datasets([ds_train, ds_valid])
     # Shuffle the dataset (train+dev) to not have pattern or use always the same examples 
     ds = ds.shuffle()
+    # sort it by label
+    ds = ds.sort('label')
     # Instances for the 1-shot examples, 500 instances as the test length is 500 
-    ds_1S = ds.select(range(500))
-    ds_2S = ds.select(range(501, 1001))
+    ds_1S_contrad = ds.select(range(250))
+    ds_1S_ent = ds.select(range(len(ds)-250,len(ds)))
+    ds_2S_contrad = ds.select(range(251, 501))
+    ds_2S_ent = ds.select(range(len(ds)-501,len(ds)-251))   
     cnt = 0
-    for inst in ds_test:
-            template = INSTRUCTION + PREFIX_STATEMENT + ds_1S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_1S[cnt-1]['primary_premise'] + '\n' + PREFIX_EXPLANATION + ds_1S[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_WRONG_EXPLANATION + ds_1S[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_1S[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + PREFIX_ANSWER + ds_1S[cnt-1]['label'] + '\n' + SEPARATOR_FS + '\n' + INSTRUCTION + PREFIX_STATEMENT + ds_2S[cnt-1]['statement'] + '\n' + PREFIX_PREMISE + ds_2S[cnt-1]['primary_premise'] + '\n' + PREFIX_EXPLANATION + ds_2S[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_2S[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_ANSWER + ds_2S[cnt-1]['label'] + '\n' + PREFIX_WRONG_EXPLANATION + ds_2S[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_2S[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + SEPARATOR_FS + '\n' + INSTRUCTION + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] 
+    for inst in ds_test:        
+            first_example = PREFIX_PREMISE + ds_1S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_1S_ent[cnt-1]['label'] + PREFIX_EXPLANATION + ds_1S_ent[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S_ent[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_WRONG_EXPLANATION + ds_1S_ent[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_1S_ent[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + PREFIX_ANSWER + ds_1S_ent[cnt-1]['label'] + '\n' 
+            second_example = PREFIX_PREMISE + ds_1S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_1S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_1S_contrad[cnt-1]['label'] + PREFIX_EXPLANATION + ds_1S_contrad[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_1S_contrad[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_WRONG_EXPLANATION + ds_1S_contrad[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_1S_contrad[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + PREFIX_ANSWER + ds_1S_contrad[cnt-1]['label'] + '\n' 
+            third_example = PREFIX_PREMISE + ds_2S_ent[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_2S_ent[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_2S_ent[cnt-1]['label'] + PREFIX_EXPLANATION + ds_2S_ent[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_2S_ent[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_WRONG_EXPLANATION + ds_2S_ent[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_2S_ent[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + PREFIX_ANSWER + ds_2S_ent[cnt-1]['label'] + '\n' 
+            fourth_example = PREFIX_PREMISE + ds_2S_contrad[cnt-1]['primary_premise'] + PREFIX_STATEMENT + ds_2S_contrad[cnt-1]['statement'] + INSTRUCTION + OPTIONS + '\n' + PREFIX_ANSWER +  ds_2S_contrad[cnt-1]['label'] + PREFIX_EXPLANATION + ds_2S_contrad[cnt-1]['primary_evidences'] + MIDDLE_EXPLANATION + ds_2S_contrad[cnt-1]['label'] + SUFFIX_EXPLANATION + '\n' + PREFIX_WRONG_EXPLANATION + ds_2S_contrad[cnt-1]['wrong_evidences'] + MIDDLE_WRONG_EXPLANATION + ds_2S_contrad[cnt-1]['label'] + SUFFIX_WONRG_EXPLANATION+ '\n' + PREFIX_ANSWER + ds_2S_contrad[cnt-1]['label'] + '\n'             
+            inf = INSTRUCTION_TO_INFER + PREFIX_STATEMENT + inst['statement'] + '\n' + PREFIX_PREMISE + inst['primary_premise'] 
+            template = first_example+'\n'+SEPARATOR_FS+'\n'+second_example+'\n'+SEPARATOR_FS+'\n'+SEPARATOR_FS+'\n'+third_example+'\n'+SEPARATOR_FS+'\n'+fourth_example+SEPARATOR_FS+'\n'+inf 
             cnt+=1
             all_templates.append(template)
             all_ids.append(inst['id'])
-    print("LEN", len(all_templates))
-
+            if cnt > 249:
+                cnt = 0           
     return all_templates, all_ids
 
-build_2shot_instances_CCOT()
+

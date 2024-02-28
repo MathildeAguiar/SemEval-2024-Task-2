@@ -1,15 +1,15 @@
 from typing import Dict, List, Optional
 import sys
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, TextStreamer, HfArgumentParser
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, TextStreamer, HfArgumentParser, AutoModelForSeq2SeqLM
 import logging
 from dataclasses import dataclass, field
-from .preprocess_llm import (
+from preprocess_llm import (
     build_1shot_instances, build_1shot_instances_CCOT, build_1shot_instances_COT, build_2shot_instances, 
     build_2shot_instances_CCOT, build_2shot_instances_COT, build_zs_instances
     )
 
-from .post_process_llm import parse_label, format_results
+from post_process_llm import parse_label, format_results
 
 
 logger = logging.getLogger(__name__)
@@ -80,9 +80,10 @@ class ModelArguments:
 
 def main():
     ### Parse the arguments ###
-    parser = HfArgumentParser((ModelArguments))
+    parser = HfArgumentParser(ModelArguments)
     model_args = parser.parse_args_into_dataclasses()
-    # Setup logging TODO see if we need more logs 
+    model_args = model_args[0]
+    # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -91,7 +92,7 @@ def main():
 
     ### Build the prompts ###
 
-    # Build the prompts in fct of the argument passed 
+    # Build the prompts in fct of the argument passed
     if model_args.template_name == 'ZS':
         templates, all_ids = build_zs_instances()
     elif model_args.template_name == '1S':
@@ -109,12 +110,11 @@ def main():
     
     #### Instanciate the desired model and tokenizer ###
     model_name_or_path = model_args.model_name_or_path
-    # TODO DELETE "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"
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, padding_side="right", use_fast=False, token=model_args.token)
-    model = AutoModelForCausalLM.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, padding_side="right", use_fast=False, token=model_args.token, max_length=4096)
+    model = AutoModelForSeq2SeqLM.from_pretrained(
         model_name_or_path,
         #revision=revision,
-        torch_dtype=torch.float16,
+        torch_dtype=torch.float32,
         device_map="auto",
         token=model_args.token
         # load_in_8bit=True,
@@ -140,6 +140,7 @@ def main():
 
         input_ids = tokenizer.apply_chat_template(history, add_generation_prompt=True, return_tensors="pt").to(model.device)
         input_length = input_ids.shape[1]
+        print('FLAG_START')
 
         generated_outputs = model.generate(
             input_ids=input_ids,
@@ -156,6 +157,7 @@ def main():
             streamer=streamer,
             return_dict_in_generate=True,
         )
+        print('FLAG_END')
 
         generated_tokens = generated_outputs.sequences[0, input_length:]
         generated_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
@@ -165,16 +167,27 @@ def main():
         return generated_text, history
 
     output_answers = []
-    for prompt in templates:
-        response, history = chat(prompt, history=None)
-        output_answers.append(response)
-
-    #### Parse the outputs to get the predicted label ####
-    # Parsing
-    preds = parse_label(output_answers)
-    # Formating into the challenge's format 
-    format_results(all_ids, preds)
-
+    # Case switching to split the prompt into several instructions
+    if model_args.template_name == 'ZS':
+        print('--------------------')
+        for prompt in templates:
+            print("LEN INPUT PROMPT ZS", len(prompt))
+            response, history = chat(prompt, history=None)
+            output_answers.append(response)
+        print('--------------------')
+    elif model_args.template_name in ['1S', '1S_COT', '1S_CCOT']: 
+        print('--------------------')
+        for prompt in templates:
+            # NOTE: modified for putting it all together
+            response1, history1 = chat(prompt, history=None)
+            output_answers.append(response1)
+        print('--------------------')
+    elif model_args.template_name in ['2S', '2S_COT', '2S_CCOT']:
+        print('--------------------')
+        for prompt in templates:
+            response1, history1 = chat(prompt, history=None)
+            output_answers.append(response1)
+        print('--------------------')
 
 
 if __name__ == "__main__":
